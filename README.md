@@ -15,7 +15,7 @@ Cell addresses usually use A1 notation as defined in [Excel](https://learn.micro
 
 ### 1.2 Goals
 
-- Enable programmatic linking to **sheets**, **ranges**, **cells**, and **named areas**.  
+- Enable programmatic linking to **sheets**, **tables**, **named areas**, and **cells/ranges/columns/rows within them**.  
 - Keep selectors simple, human-readable, and close to how users already reference cells in spreadsheet applications.  
 - Define predictable fallback behavior when a selector cannot be resolved.  
 
@@ -29,96 +29,123 @@ Cell addresses usually use A1 notation as defined in [Excel](https://learn.micro
 
 ## 2. Fragment Selector Types
 
-### 2.1 Cell
+This spec uses a **two-level model**:
 
-Selects individual cells by their A1 notation. Multiple cells can be comma-separated.
+- **First-level (target) selectors:** identify a *container* of cells.
+  - `sheet=<name>` — a worksheet by name.  
+  - `table=<name>` — a structured table by name.  
+  - `named=<name>` — a named range (resolves to a rectangular block).  
+  - *(If omitted, the default target is the first sheet in document order.)*
 
-Examples:
+- **Second-level (within-target) selectors:** select cells inside the target.
+  - `range=<A1>:<A1>` — rectangular block in A1 notation.  
+  - `cell=<A1>[,<A1>...]` — one or more individual cells.  
+  - `column=<Col>[ : <Col> ]` — one column or a contiguous column range.  
+  - `row=<Row>[ : <Row> ]` — one row or a contiguous row range.  
 
-```url
-http://example.com/data.xlsx#cell=B3
-http://example.com/data.xlsx#cell=A1,C5,E10
-```
+Composition rule: **at most one `&`** may be used to attach **one** second-level selector to **one** first-level selector (or the implicit default sheet).
 
-### 2.1 Sheet
+### 2.1 Sheet (first-level)
 
 Selects a whole sheet by name.
-Example:  
 
 ```url
 http://example.com/data.xlsx#sheet=Sheet1
-```
+````
 
-### 2.2 Range
+### 2.2 Table (first-level)
 
-Selects a rectangular range of cells using A1 notation.
-
-Examples:  
-
-```url
-http://example.com/data.xlsx#range=A1:D10
-http://example.com/data.xlsx#sheet=Sheet2&range=B2:C5
-```
-
-### 2.4 Named Ranges
-
-Uses spreadsheet-defined names.  
-Example:  
-
-```url
-http://example.com/data.xlsx#named=SalesData
-
-```
-
-### 2.5 Tables (Excel-style)
-
-References structured tables.
-
-Example:
+References a structured table by name.
 
 ```url
 http://example.com/data.xlsx#table=Expenses
-
 ```
 
-### 2.6 Multi-Selections
+### 2.3 Named Range (first-level)
 
-Multiple selectors may be combined.
-
-Example:
+Uses a spreadsheet-defined named range.
 
 ```url
-http://example.com/data.xlsx#sheet=Sheet1&cell=A1&range=B2:C3
+http://example.com/data.xlsx#named=SalesData
 ```
+
+### 2.4 Range (second-level)
+
+Selects a rectangular region of cells using A1 notation **within the target**.
+
+```url
+http://example.com/data.xlsx#sheet=Sheet2&range=B2:C5
+http://example.com/data.xlsx#range=A1:D10
+```
+
+### 2.5 Cell (second-level)
+
+Selects one or more individual cells **within the target**.
+
+```url
+http://example.com/data.xlsx#cell=B3
+http://example.com/data.xlsx#sheet=Sheet1&cell=A1,C5,E10
+```
+
+### 2.6 Column (second-level)
+
+Selects **all non-empty cells** in a column or contiguous column range **within the target**.
+
+```url
+http://example.com/data.xlsx#column=C
+http://example.com/data.xlsx#sheet=Data&column=C:D
+```
+
+### 2.7 Row (second-level)
+
+Selects **all non-empty cells** in a row or contiguous row range **within the target**.
+
+```url
+http://example.com/data.xlsx#row=3
+http://example.com/data.xlsx#named=Region2025&row=2:5
+```
+
+> **Non-empty** means cells that contain a stored value or a formula whose evaluated result is not an empty value. Implementations MAY define empty-value handling more precisely per platform.
+
+> **No multi-`&` chaining.** `#sheet=Sheet1&range=A1:B2` is valid; `#sheet=Sheet1&range=A1:B2&row=3` is **invalid**.
 
 ---
 
 ## 3. Syntax
 
-Selectors follow a `key=value` format joined by `&`.  
+Selectors follow a `key=value` format. **At most one `&`** is permitted, to attach a **single second-level selector** to a **single first-level selector**. If no first-level selector is given, the second-level selector applies to the default (first) sheet.
 
-Proposed grammar (simplified):
+### 3.1 ABNF
 
 ```text
-fragment            = selector *( "&" selector )
-selector            = sheet-selector / range-selector / cell-selector /
-                      named-selector / table-selector
+; Top-level
+fragment            = target [ "&" within ]
+
+; First-level targets (choose at most one)
+target              = sheet-selector / table-selector / named-selector / within
+                      ; If target is omitted, 'within' applies to the default sheet.
 
 sheet-selector      = "sheet=" value
+table-selector      = "table=" value
+named-selector      = "named=" value
+
+; Second-level selections
+within              = range-selector / cell-selector / column-selector / row-selector
+
 range-selector      = "range=" cell-ref ":" cell-ref
 cell-selector       = "cell=" cell-list
-named-selector      = "named=" value
-table-selector      = "table=" value
+column-selector     = "column=" column-label [ ":" column-label ]
+row-selector        = "row=" row-number [ ":" row-number ]
 
 cell-list           = cell-ref *( "," cell-ref )
-cell-ref            = column-label row-number  ; e.g. A1, B2, AA10
+cell-ref            = column-label row-number
 column-label        = 1*( %x41-5A )            ; A..Z, AA..ZZ, etc.
 row-number          = 1*DIGIT
 
+; Names and encoding
 value               = 1*( pchar-no-amp-hash )
 pchar-no-amp-hash   = unreserved / pct-encoded / sub-delims-no-amp / ":" / "@"
-sub-delims-no-amp   = "!" / "$" / "'" / "(" / ")" / "*" / "+" / "," / ";" / "=" 
-                    ; no "&" or "#"
+sub-delims-no-amp   = "!" / "$" / "'" / "(" / ")" / "*" / "+" / "," / ";" / "="
 pct-encoded         = "%" HEXDIG HEXDIG
 unreserved          = ALPHA / DIGIT / "-" / "." / "_" / "~"
 HEXDIG              = DIGIT / "A" / "B" / "C" / "D" / "E" / "F"
@@ -128,33 +155,10 @@ DIGIT               = %x30-39
 
 ### Notes for implementers
 
-- Disallowed literally in values: & and #. If needed in a name, encode them (& → %26, # → %23).
-
-- Everything else allowed by pchar is fine, but if your name includes characters outside pchar (e.g., space), percent-encode ( → %20).
-
-- Percent-decoding is case-insensitive (%2F ≡ %2f).
-
-- This spec intentionally does not enforce application-specific limits (e.g., Excel’s 31-char sheet name limit or forbidden characters). Different formats vary. Tools may validate those separately.
-
-### Examples
-
-- Sheet with space:
-
-    ```url
-    http://example.com/data.xlsx#sheet=Annual%20Report
-    ```
-
-- Sheet with & in the name (R&D):
-
-    ```url
-    http://example.com/data.xlsx#sheet=R%26D
-    ```
-
-- Named range with # in the name (Sales#2025):
-
-    ```url
-    http://example.com/data.xlsx#named=Sales%232025
-    ```
+* Disallowed literally in values: `&` and `#`. If needed in a name, encode them (`&` → `%26`, `#` → `%23`).
+* Everything else allowed by `pchar` is fine, but if your name includes characters outside `pchar` (e.g., space), percent-encode (` ` → `%20`).
+* Percent-decoding is case-insensitive (`%2F` ≡ `%2f`).
+* This spec intentionally does not enforce application-specific limits (e.g., Excel’s 31-char sheet name limit or forbidden characters). Different formats vary. Tools may validate those separately.
 
 ---
 
@@ -162,34 +166,38 @@ DIGIT               = %x30-39
 
 ### 4.1 Resolution
 
-- If `sheet` is specified, selectors apply to that sheet.
-- If no sheet is specified, default to the first sheet.
-- Named ranges and tables are resolved first, then ranges and cells.
+* If `sheet`, `table`, or `named` is present, resolve that **target** first.
+* If no target is present, the **default sheet** is the target.
+* If a `within` selector is present via `&`, apply it inside the resolved target.
+* `column` and `row` select **all non-empty cells** in the specified column(s)/row(s) within the target’s bounds.
 
 ### 4.2 Errors
 
-- Unknown sheet, named range, or table → treat as no match.  
-- Malformed fragment syntax → ignore fragment (use full document).  
+* More than one `&` → invalid fragment (treat as no match or ignore fragment).
+* Multiple first-level targets (e.g., `sheet=…&table=…`) → invalid.
+* Unknown target name or out-of-bounds `column`/`row` → no match.
+* Malformed syntax → ignore fragment (use full document).
 
 ### 4.3 Fallback
 
-- Tools that do not understand fragments should process the entire spreadsheet.  
-- Tools may choose to return partial data when only part of the selector resolves.  
+* Tools that do not understand fragments should process the entire spreadsheet.
+* Tools MAY return partial data when only part of the selector resolves.
 
 ---
 
 ## 5. Security and Privacy
 
-- Linking to specific cells may expose sensitive information if documents are shared externally.
-- Tools should consider redacting or refusing to resolve selectors that point to hidden or protected areas.
+* Linking to specific cells may expose sensitive information if documents are shared externally.
+* Tools should consider redacting or refusing to resolve selectors that point to hidden or protected areas.
 
 ---
 
 ## 6. Future Extensions
 
-- Chart or pivot table references  
-- Row/column header references by label  
-- Rich query selectors (`filter`, `sort`)  
+* Header-based selection (e.g., `column-by-header=Total`)
+* Label-based row selection
+* Rich query selectors (`filter`, `sort`)
+* Explicit empty-value semantics per platform
 
 ---
 
